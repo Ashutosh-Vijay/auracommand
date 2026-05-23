@@ -528,10 +528,35 @@ class AuraHandler(http.server.SimpleHTTPRequestHandler):
 
         sev = dispatcher_result.get("severity_level", "GREEN")
 
-        # Build trilingual PA script
-        pa_en = dispatcher_result.get("pa_script_english", "")
-        pa_hi = dispatcher_result.get("pa_script_hindi", "")
-        pa_kn = dispatcher_result.get("pa_script_kannada", "")
+        # Robust key-lookup with fallbacks for English, Hindi, and Kannada PA scripts
+        pa_en = (
+            dispatcher_result.get("pa_script_english") or 
+            dispatcher_result.get("pa_english") or 
+            dispatcher_result.get("pa_announcement_english") or 
+            dispatcher_result.get("english_pa") or 
+            dispatcher_result.get("pa_script_en") or 
+            dispatcher_result.get("pa_en") or 
+            ""
+        )
+        pa_hi = (
+            dispatcher_result.get("pa_script_hindi") or 
+            dispatcher_result.get("pa_hindi") or 
+            dispatcher_result.get("pa_announcement_hindi") or 
+            dispatcher_result.get("hindi_pa") or 
+            dispatcher_result.get("pa_script_hi") or 
+            dispatcher_result.get("pa_hi") or 
+            ""
+        )
+        pa_kn = (
+            dispatcher_result.get("pa_script_kannada") or 
+            dispatcher_result.get("pa_script_kanada") or 
+            dispatcher_result.get("pa_kannada") or 
+            dispatcher_result.get("pa_announcement_kannada") or 
+            dispatcher_result.get("kannada_pa") or 
+            dispatcher_result.get("pa_script_kn") or 
+            dispatcher_result.get("pa_kn") or 
+            ""
+        )
         pa_script = pa_en
         if pa_hi:
             pa_script += "\n\n[HI] " + pa_hi

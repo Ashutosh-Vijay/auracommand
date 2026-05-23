@@ -478,6 +478,8 @@ function App() {
   const [cachedAudioBuffer, setCachedAudioBuffer] = useState(null);
   const [ttsStatus, setTtsStatus] = useState("standby");
   const preFetchScenarioIdRef = useRef(null);
+  const cachedAudioBufferRef = useRef(null);
+  const preFetchPromiseRef = useRef(null);
   const [pulse, setPulse] = useState(true);
   const [directiveStatuses, setDirectiveStatuses] = useState([]);
   const timeoutsRef = useRef([]);
@@ -623,7 +625,7 @@ function App() {
 
 
   async function preFetchAudio(s) {
-    if (!s || !s.gemini_powered) return;
+    if (!s || !s.gemini_powered) return null;
     const scenarioId = s.id;
     preFetchScenarioIdRef.current = scenarioId;
 
@@ -636,7 +638,7 @@ function App() {
       let audioB64 = null;
       // Poll pre-generated TTS for up to 15 seconds
       for (let attempt = 0; attempt < 15; attempt++) {
-        if (preFetchScenarioIdRef.current !== scenarioId) return;
+        if (preFetchScenarioIdRef.current !== scenarioId) return null;
 
         const res = await fetch("/api/tts-status");
         if (res.ok) {
@@ -651,7 +653,7 @@ function App() {
       }
 
       if (audioB64) {
-        if (preFetchScenarioIdRef.current !== scenarioId) return;
+        if (preFetchScenarioIdRef.current !== scenarioId) return null;
 
         const raw = atob(audioB64);
         const bytes = new Uint8Array(raw.length);
@@ -659,19 +661,23 @@ function App() {
         
         const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
         
-        if (preFetchScenarioIdRef.current !== scenarioId) return;
+        if (preFetchScenarioIdRef.current !== scenarioId) return null;
+        cachedAudioBufferRef.current = audioBuffer;
         setCachedAudioBuffer(audioBuffer);
         setTtsStatus("ready");
         console.log("[TTS] Pre-fetched and decoded audio successfully!");
+        return audioBuffer;
       } else {
-        if (preFetchScenarioIdRef.current !== scenarioId) return;
+        if (preFetchScenarioIdRef.current !== scenarioId) return null;
         setTtsStatus("fallback");
+        return null;
       }
     } catch (e) {
       console.warn("[TTS] Pre-fetching/decoding failed:", e);
       if (preFetchScenarioIdRef.current === scenarioId) {
         setTtsStatus("fallback");
       }
+      return null;
     }
   }
 
@@ -679,17 +685,19 @@ function App() {
     // cancel anything pending
     timeoutsRef.current.forEach(clearTimeout);
     timeoutsRef.current = [];
-    if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
+    if (ttsAudioRef.current) { ttsAudioRef.current.stop?.(); ttsAudioRef.current = null; }
     window.speechSynthesis?.cancel();
     setSpeaking(false);
     setCachedAudioBuffer(null);
+    cachedAudioBufferRef.current = null;
     preFetchScenarioIdRef.current = null;
 
     if (s.gemini_powered) {
       setTtsStatus("fetching");
-      preFetchAudio(s);
+      preFetchPromiseRef.current = preFetchAudio(s);
     } else {
       setTtsStatus("fallback");
+      preFetchPromiseRef.current = null;
     }
 
     setActiveRun(s);
@@ -751,6 +759,8 @@ function App() {
     setRunning(false);
     setSpeaking(false);
     setCachedAudioBuffer(null);
+    cachedAudioBufferRef.current = null;
+    preFetchPromiseRef.current = null;
     setTtsStatus("standby");
     preFetchScenarioIdRef.current = null;
   }
@@ -773,13 +783,19 @@ function App() {
     if (ctx.state === "suspended") await ctx.resume();
  
     try {
-      let audioBuffer = cachedAudioBuffer;
+      let audioBuffer = cachedAudioBufferRef.current;
+ 
+      if (!audioBuffer && preFetchPromiseRef.current) {
+        console.log("[TTS] speakPA waiting for background pre-fetch promise...");
+        audioBuffer = await preFetchPromiseRef.current;
+      }
  
       if (!audioBuffer) {
+        console.log("[TTS] No pre-fetched audio, polling or generating on-demand...");
         setTtsStatus("fetching");
         let audioB64 = null;
-        // Poll pre-generated TTS for up to 10 seconds
-        for (let attempt = 0; attempt < 10; attempt++) {
+        // Poll pre-generated TTS for up to 5 seconds
+        for (let attempt = 0; attempt < 5; attempt++) {
           const res = await fetch("/api/tts-status");
           if (res.ok) {
             const data = await res.json();
@@ -792,6 +808,7 @@ function App() {
         // If pre-generated audio wasn't ready, fire on-demand TTS
         if (!audioB64) {
           const fullText = parts.filter(Boolean).join(". ... ");
+          console.log("[TTS] Polling timed out. Firing on-demand TTS generation...");
           const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -808,6 +825,7 @@ function App() {
           const bytes = new Uint8Array(raw.length);
           for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
           audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+          cachedAudioBufferRef.current = audioBuffer;
           setCachedAudioBuffer(audioBuffer);
           setTtsStatus("ready");
         }
