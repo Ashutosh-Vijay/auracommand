@@ -47,17 +47,7 @@ function ScenarioCard({ scenario, armed, onToggle, disabled, dispatched }) {
           </span>
           {scenario.id}
         </span>
-        <span style={{
-          fontFamily: "JetBrains Mono, monospace",
-          fontSize: 8.5, letterSpacing: "0.14em",
-          color: t.color, fontWeight: 700,
-          padding: "2px 6px",
-          border: `1px solid ${t.color}55`,
-          borderRadius: 999,
-          background: t.bg,
-        }}>
-          {t.label}
-        </span>
+        {/* Static severity tag removed to avoid clashing with dynamic model output */}
       </div>
       <div style={{
         fontFamily: "Geist, Inter, system-ui, sans-serif",
@@ -575,7 +565,7 @@ function App() {
     ]);
     
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/dispatch", {
+      const response = await fetch("/api/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scenario_keys: keys })
@@ -592,7 +582,7 @@ function App() {
       if (s.expected_severity === "RED") {
         const pollId = setInterval(async () => {
           try {
-            const audRes = await fetch("http://127.0.0.1:8000/api/auditor");
+            const audRes = await fetch("/api/auditor");
             if (audRes.ok) {
               const audData = await audRes.json();
               if (audData && audData.verdict !== "VERIFYING") {
@@ -718,7 +708,7 @@ function App() {
       let audioB64 = null;
       // Poll pre-generated TTS for up to 10 seconds
       for (let attempt = 0; attempt < 10; attempt++) {
-        const res = await fetch("http://127.0.0.1:8000/api/tts-status");
+        const res = await fetch("/api/tts-status");
         if (res.ok) {
           const data = await res.json();
           if (data.status === "ready" && data.audio) { audioB64 = data.audio; break; }
@@ -730,7 +720,7 @@ function App() {
       // If pre-generated audio wasn't ready, fire on-demand TTS
       if (!audioB64) {
         const fullText = parts.filter(Boolean).join(". ... ");
-        const res = await fetch("http://127.0.0.1:8000/api/tts", {
+        const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: fullText, voice: "Kore" }),

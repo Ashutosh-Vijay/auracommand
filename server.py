@@ -9,7 +9,7 @@ import io
 import traceback
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
-PORT = 8000
+PORT = int(os.environ.get("PORT", 8080))
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "luminous-bazaar-496916-h3")
@@ -188,7 +188,10 @@ ANOMALY FLAGS:
 {"COMPOUND EVENT: Multiple incidents are simultaneous. Analyze cross-corridor interference. Two ORANGE-severity incidents overlapping can auto-escalate to RED if they create compounding crowd pressure in shared corridors." if is_compound else ""}
 
 INSTRUCTIONS:
-1. Classify severity as GREEN, ORANGE, or RED based on composite risk
+1. Classify severity as GREEN, ORANGE, or RED based on composite risk. Follow these strict stadium SOP criteria:
+   - Classify as RED for critical safety and security incidents: Unauthorised Drone in Pitch Airspace (due to airspace intrusion and unknown payload risk), Suspect Package / baggage alert (due to explosive threat/K9 alert), or Gate Structural Bottlenecks (turnstile rate exceeding structural limits with density > 0.95).
+   - Classify as ORANGE for localized, serious but contained incidents: Medical emergencies (cardiac events), standard pitch invasions (fan crossing boundary), sudden heavy downpours, or player arrival crowd surges.
+   - Classify as GREEN for nominal post-match exit dispersal flows with no anomalies.
 2. Write detailed analytical reasoning (3-5 sentences minimum)
 3. Generate mitigation directives with specific stadium zones
 4. Write trilingual PA scripts (English + Hindi + Kannada) -- calm tone, NO panic terms
@@ -663,7 +666,7 @@ if __name__ == "__main__":
         print(f"  TTS       : {TTS_MODEL}")
     print(f"  Endpoints : /api/dispatch (POST), /api/auditor (GET), /api/tts (POST), /api/tts-status (GET), /api/health (GET)")
     print()
-    server = http.server.HTTPServer(("127.0.0.1", PORT), AuraHandler)
+    server = http.server.HTTPServer(("0.0.0.0", PORT), AuraHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
