@@ -187,9 +187,31 @@ function mobileIdleStyle() {
   };
 }
 
-function PAScript({ payload, severity, onSpeak, speaking, voicesReady, sections }) {
+function PAScript({ payload, severity, onSpeak, speaking, ttsStatus, sections }) {
   const sevColor = severity === "RED" ? "#f55050" : severity === "ORANGE" ? "#f5aa3c" : severity === "GREEN" ? "#22c88c" : "rgba(160,180,200,0.55)";
   const text = payload?.pa_system_announcement_script || "";
+
+  const getTtsStatusLabel = (status) => {
+    switch (status) {
+      case "standby": return "TTS · GEMINI 2.5-FLASH · STANDBY";
+      case "generating": return "TTS · GEMINI 2.5-FLASH · GENERATING...";
+      case "fetching": return "TTS · GEMINI 2.5-FLASH · DECODING AUDIO...";
+      case "ready": return "TTS · GEMINI 2.5-FLASH · READY (INSTANT)";
+      case "fallback": return "TTS · BROWSER SPEECH · READY";
+      default: return "TTS · INITIALIZING...";
+    }
+  };
+
+  const getTtsStatusColor = (status) => {
+    switch (status) {
+      case "standby": return "rgba(160,180,200,0.4)";
+      case "generating": return "#f5aa3c";
+      case "fetching": return "#389cf2";
+      case "ready": return "#22c88c";
+      case "fallback": return "rgba(160,180,200,0.7)";
+      default: return "rgba(160,180,200,0.4)";
+    }
+  };
   const hiMatch = text.match(/\n\n\[HI\]\s*/);
   const knMatch = text.match(/\n\n\[KN\]\s*/);
   let en = text, hi = "", kn = "";
@@ -267,8 +289,32 @@ function PAScript({ payload, severity, onSpeak, speaking, voicesReady, sections 
         borderTop: "1px solid rgba(140,160,180,0.14)",
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
       }}>
-        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: "0.14em", color: "rgba(160,180,200,0.5)" }}>
-          {voicesReady ? "TTS · GEMINI 2.5-FLASH · READY" : "TTS · INITIALIZING..."}
+        <div style={{
+          fontFamily: "JetBrains Mono, monospace",
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: getTtsStatusColor(ttsStatus),
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          transition: "all 300ms ease"
+        }}>
+          {ttsStatus === "generating" || ttsStatus === "fetching" ? (
+            <span style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: getTtsStatusColor(ttsStatus),
+              display: "inline-block",
+              animation: "dotPulse 1s ease-in-out infinite"
+            }} />
+          ) : ttsStatus === "ready" ? (
+            <span style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: "#22c88c",
+              display: "inline-block",
+              boxShadow: "0 0 6px #22c88c"
+            }} />
+          ) : null}
+          {getTtsStatusLabel(ttsStatus)}
         </div>
         <button
           disabled={!text || speaking}

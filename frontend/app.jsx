@@ -475,7 +475,9 @@ function App() {
   const [cycleId, setCycleId] = useState(0);
   const [runningSince, setRunningSince] = useState(null);
   const [speaking, setSpeaking] = useState(false);
-  const [voicesReady, setVoicesReady] = useState(false);
+  const [cachedAudioBuffer, setCachedAudioBuffer] = useState(null);
+  const [ttsStatus, setTtsStatus] = useState("standby");
+  const preFetchScenarioIdRef = useRef(null);
   const [pulse, setPulse] = useState(true);
   const [directiveStatuses, setDirectiveStatuses] = useState([]);
   const timeoutsRef = useRef([]);
@@ -533,8 +535,8 @@ function App() {
     });
   }, [payload]);
 
-  // TTS is always ready (Gemini API-based, no browser voices needed)
-  useEffect(() => { setVoicesReady(true); }, []);
+  // Initialize TTS status
+  useEffect(() => { setTtsStatus("standby"); }, []);
 
   // tick to refresh elapsed timer
   const [, force] = useState(0);
@@ -557,6 +559,7 @@ function App() {
   async function dispatch() {
     if (running || armedKeys.size === 0) return;
     setRunning(true);
+    setTtsStatus("generating");
     const keys = Array.from(armedKeys);
     
     // Immediate starting feed to indicate server connection
@@ -619,6 +622,59 @@ function App() {
   }
 
 
+  async function preFetchAudio(s) {
+    if (!s || !s.gemini_powered) return;
+    const scenarioId = s.id;
+    preFetchScenarioIdRef.current = scenarioId;
+
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+
+      let audioB64 = null;
+      // Poll pre-generated TTS for up to 15 seconds
+      for (let attempt = 0; attempt < 15; attempt++) {
+        if (preFetchScenarioIdRef.current !== scenarioId) return;
+
+        const res = await fetch("/api/tts-status");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === "ready" && data.audio) {
+            audioB64 = data.audio;
+            break;
+          }
+          if (data.status !== "pending") break;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      if (audioB64) {
+        if (preFetchScenarioIdRef.current !== scenarioId) return;
+
+        const raw = atob(audioB64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        
+        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        
+        if (preFetchScenarioIdRef.current !== scenarioId) return;
+        setCachedAudioBuffer(audioBuffer);
+        setTtsStatus("ready");
+        console.log("[TTS] Pre-fetched and decoded audio successfully!");
+      } else {
+        if (preFetchScenarioIdRef.current !== scenarioId) return;
+        setTtsStatus("fallback");
+      }
+    } catch (e) {
+      console.warn("[TTS] Pre-fetching/decoding failed:", e);
+      if (preFetchScenarioIdRef.current === scenarioId) {
+        setTtsStatus("fallback");
+      }
+    }
+  }
+
   function runScenario(s) {
     // cancel anything pending
     timeoutsRef.current.forEach(clearTimeout);
@@ -626,6 +682,15 @@ function App() {
     if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
     window.speechSynthesis?.cancel();
     setSpeaking(false);
+    setCachedAudioBuffer(null);
+    preFetchScenarioIdRef.current = null;
+
+    if (s.gemini_powered) {
+      setTtsStatus("fetching");
+      preFetchAudio(s);
+    } else {
+      setTtsStatus("fallback");
+    }
 
     setActiveRun(s);
     setStreamEntries([]);
@@ -685,6 +750,9 @@ function App() {
     setDirectiveStatuses([]);
     setRunning(false);
     setSpeaking(false);
+    setCachedAudioBuffer(null);
+    setTtsStatus("standby");
+    preFetchScenarioIdRef.current = null;
   }
 
   const ttsAudioRef = React.useRef(null);
@@ -694,48 +762,58 @@ function App() {
     if (!payload) return;
     if (ttsAudioRef.current) { ttsAudioRef.current.stop?.(); ttsAudioRef.current = null; }
     window.speechSynthesis?.cancel();
-
+ 
     const text = payload.pa_system_announcement_script;
     const parts = text.split(/\n\n\[(?:HI|KN)\]\s*/);
     const en = parts[0] || "";
     setSpeaking(true);
-
+ 
     if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     const ctx = audioCtxRef.current;
     if (ctx.state === "suspended") await ctx.resume();
-
+ 
     try {
-      let audioB64 = null;
-      // Poll pre-generated TTS for up to 10 seconds
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const res = await fetch("/api/tts-status");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === "ready" && data.audio) { audioB64 = data.audio; break; }
-          if (data.status !== "pending") break;
+      let audioBuffer = cachedAudioBuffer;
+ 
+      if (!audioBuffer) {
+        setTtsStatus("fetching");
+        let audioB64 = null;
+        // Poll pre-generated TTS for up to 10 seconds
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const res = await fetch("/api/tts-status");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "ready" && data.audio) { audioB64 = data.audio; break; }
+            if (data.status !== "pending") break;
+          }
+          await new Promise(r => setTimeout(r, 1000));
         }
-        await new Promise(r => setTimeout(r, 1000));
-      }
-
-      // If pre-generated audio wasn't ready, fire on-demand TTS
-      if (!audioB64) {
-        const fullText = parts.filter(Boolean).join(". ... ");
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: fullText, voice: "Kore" }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.audio) audioB64 = data.audio;
+ 
+        // If pre-generated audio wasn't ready, fire on-demand TTS
+        if (!audioB64) {
+          const fullText = parts.filter(Boolean).join(". ... ");
+          const res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: fullText, voice: "Kore" }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.audio) audioB64 = data.audio;
+          }
+        }
+ 
+        if (audioB64) {
+          const raw = atob(audioB64);
+          const bytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+          audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+          setCachedAudioBuffer(audioBuffer);
+          setTtsStatus("ready");
         }
       }
-
-      if (audioB64) {
-        const raw = atob(audioB64);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+ 
+      if (audioBuffer) {
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(ctx.destination);
@@ -747,8 +825,9 @@ function App() {
       throw new Error("No audio available");
     } catch (e) {
       console.warn("Gemini TTS failed, falling back to browser speech:", e.message);
+      setTtsStatus("fallback");
     }
-
+ 
     if ("speechSynthesis" in window) {
       const u1 = new SpeechSynthesisUtterance(en);
       u1.rate = 0.95; u1.pitch = 0.95; u1.lang = "en-IN";
@@ -956,7 +1035,7 @@ function App() {
       }}>
         <MobileAlert payload={payload} severity={severity} scenario={activeScenario} sections={activeScenario?.sources?.length || 1} />
         <TeamChannels payload={payload} severity={severity} statuses={directiveStatuses} onFire={(i) => fireDirective(i, "operator")} />
-        <PAScript payload={payload} severity={severity} onSpeak={speakPA} speaking={speaking} voicesReady={voicesReady} sections={activeScenario?.sources?.length || 1} />
+        <PAScript payload={payload} severity={severity} onSpeak={speakPA} speaking={speaking} ttsStatus={ttsStatus} sections={activeScenario?.sources?.length || 1} />
       </footer>
     </div>
   );
